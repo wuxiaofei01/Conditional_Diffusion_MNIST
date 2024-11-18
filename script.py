@@ -298,7 +298,43 @@ class DDPM(nn.Module):
         
         x_i_store = np.array(x_i_store)
         return x_i, x_i_store
+    def sample_ddim(self,
+                    n_sample,
+                    size,
+                    device,
+                    guide_w=2,
+                    simple_var=True,
+                    ddim_step=50,
+                    eta=1):
+        if simple_var:
+            eta = 1
+        ts = torch.linspace(self.n_T, 0,
+                            (ddim_step + 1)).to(device).to(torch.long)
+        x_i = torch.randn(n_sample, *size).to(device)
 
+        c = torch.arange(0,10).to(device) 
+        c = c.repeat(int(n_sample/c.shape[0]))     
+
+        context_mask = torch.zeros_like(c).to(device)     
+
+        x_i_store = []
+        for i in range(self.n_T, 1, -1):
+            #先不考虑classfy free
+            z = torch.randn(n_sample, *size).to(device) if i > 1 else 0
+            t_is = torch.tensor(i / self.n_T).to(device).repeat(n_sample, 1)
+
+            eps = self.nn_model(x_i, c ,t_is.float(), context_mask)
+
+            x0_t = (x_i - eps * (1 - self.alphabar_t[i]).sqrt()) / self.alphabar_t[i].sqrt()
+            c1 = eta * ((1 - self.alphabar_t[i] / self.alphabar_t[i - 1]) * (1 - self.alphabar_t[i - 1]) / (
+                                1 - self.alphabar_t[i])).sqrt()
+            c2 = ((1 - self.alphabar_t[i - 1]) - c1 ** 2).sqrt()
+            x_i = self.alphabar_t[i - 1].sqrt() * x0_t + c1 * z + c2 * eps
+
+            if i%20==0 or i==self.n_T or i<8:
+                x_i_store.append(x_i.detach().cpu().numpy())
+        x_i_store = np.array(x_i_store)
+        return x_i ,x_i_store
 
 def train_mnist():
 
@@ -354,8 +390,8 @@ def train_mnist():
         with torch.no_grad():
             n_sample = 4*n_classes
             for w_i, w in enumerate(ws_test):
-                x_gen, x_gen_store = ddpm.sample(n_sample, (1, 28, 28), device, guide_w=w)
-
+                # x_gen, x_gen_store = ddpm.sample(n_sample, (1, 28, 28), device, guide_w=w)
+                x_gen, x_gen_store = ddpm.sample_ddim(n_sample, (1, 28, 28), device, guide_w=w)
                 # append some real images at bottom, order by class also
                 x_real = torch.Tensor(x_gen.shape).to(device)
                 for k in range(n_classes):
